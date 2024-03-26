@@ -12,6 +12,7 @@ import pandas as pd
 from datetime import datetime, date
 import re
 from urllib.parse import urlsplit
+from markupsafe import Markup
 
 #Import pricing from CSV and set global variables
 price_df = pd.read_csv('gwpricing.csv')
@@ -147,6 +148,50 @@ def reg(regid):
     else:
         return render_template('reg.html', reg=reg)
 
+@app.route('/upload', methods=('GET', 'POST'))
+def upload():
+    if request.method == 'POST':   
+        f = request.files['file'] 
+        f.save(f.filename)
+        print
+        print(os.path.join(os.path.abspath(os.path.dirname(app.root_path)),"../",f.filename))
+
+        s = os.environ['AZURE_POSTGRESQL_CONNECTIONSTRING']
+        conndict = dict(item.split("=") for item in s.split(" "))
+        connstring = "postgresql+psycopg2://" + conndict["user"] + ":" + conndict["password"] + "@" + conndict["host"] + ":5432/" + conndict["dbname"] 
+        engine=db.create_engine(connstring)
+        #conn = engine.connect()
+        metadata = db.MetaData()
+        registrations = db.Table('registrations', metadata)
+
+        root_path = os.path.dirname(os.path.dirname( __file__ ))
+        df = pd.read_csv(os.path.join(root_path,f.filename))
+
+
+        # Rename columns from CSV to match DB - order is important
+        df.columns = ['event_id','event_name','order_id','reg_date_time','medallion','fname','lname','scaname_bad','acc_member_id','acc_exp_date','event_ticket','price_paid','order_price','lodging','pay_type','prereg_status','kingdom','regid','scaname','mbr_num_exp','requests','waiver1','waiver2']
+        df = df.drop(columns=['event_id','event_name','scaname_bad','acc_member_id','acc_exp_date','order_price','waiver1','waiver2']) # Remove unwanted columns from the import
+
+        df[['rate_age']] = df['event_ticket'].str.extract('(Child|18\+|Heirs|K\/Q|Royals)', expand=True) # Split rate, age and arival date from single field
+        df[['rate_mbr']] = df['event_ticket'].str.extract('(Member|Non-Member)', expand=True) # Split rate, age and arival date from single field
+        df[['rate_date']] = df['event_ticket'].str.extract('Arriving (\d+)', expand=True) # Split rate, age and arival date from single field
+
+        df[['mbr_num']] = df['mbr_num_exp'].str.extract('^(\d{4,})', expand=True) # Extract member number 
+        df['lodging'] = df['lodging'].str.extract('(.*)\s\(\$') # Remove price from camping groups
+
+
+        # Import data to DB
+        df.to_sql('registrations', engine, if_exists= 'append', index=False)
+
+        # Adjust regid for at-the-door registrations
+        conn = psycopg2.connect(os.environ["AZURE_POSTGRESQL_CONNECTIONSTRING"])
+        cur = conn.cursor()
+        cur.execute ('ALTER SEQUENCE registrations_regid_seq RESTART WITH 60001;')
+        conn.commit()
+        conn.close()
+        flash("SUCCESS!")
+    return render_template('upload.html')
+
 @app.route('/create', methods=('GET', 'POST'))
 def create():
     form = CreateRegForm()
@@ -208,6 +253,16 @@ def editreg():
         lodging = form.lodging.data
 
         conn = get_db_connection()
+        reg = query_db(
+            "SELECT * FROM registrations WHERE medallion = %s order by lname, fname",
+            (form.medallion.data,))
+        print(reg)
+        if reg.count > 0:
+            print("NOPE")
+            flash("NOPE")
+            return redirect(url_for('reg'))
+        else:
+            print("YEP")
         cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
         #Update DB with medallion number, timestamp, and costs
         cur.execute('UPDATE registrations SET (medallion, price_calc, price_paid, price_due, rate_mbr, rate_age, kingdom, lodging) = (%s, %s, %s, %s, %s, %s, %s, %s ) WHERE regid = %s;',
@@ -240,8 +295,10 @@ def checkin():
         #print(form)
     #Calculate Total Price
 
-    today = int(datetime.today().date().strftime('%-d'))  #Get today's day to calculate pricing
+    #today = int(datetime.today().date().strftime('%-d'))  #Get today's day to calculate pricing
     
+    today = date.today().day
+
     if today >= 23:
         today = 9
     
@@ -319,13 +376,24 @@ def checkin():
     
             
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
-        #Update DB with medallion number, timestamp, and costs
-        cur.execute('UPDATE registrations SET (medallion, price_calc, price_due, rate_mbr, kingdom, checkin) = (%s, %s, %s, %s, %s, current_timestamp(0)) WHERE regid = %s;',
-                        (medallion, price_calc, price_due, rate_mbr, kingdom, regid))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('reg', regid=regid))
+        medallion_check = query_db(
+            "SELECT * FROM registrations WHERE medallion = %s order by lname, fname",
+            (form.medallion.data,))
+        print(medallion_check)
+        if len(medallion_check) > 0:
+            print("NOPE")
+            flash("NOPE Medallion # " + str(medallion_check[0]['medallion']) + " already assigned to " + str(medallion_check[0]['regid']) )
+            dup_url = '<a href=' + url_for('reg', regid=str(medallion_check[0]['regid'])) + ' target="_blank" rel="noopener noreferrer">Duplicate</a>'
+            flash(Markup(dup_url))
+        else:
+            print("YEP")
+            cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+            #Update DB with medallion number, timestamp, and costs
+            cur.execute('UPDATE registrations SET (medallion, price_calc, price_due, rate_mbr, kingdom, checkin) = (%s, %s, %s, %s, %s, current_timestamp(0)) WHERE regid = %s;',
+                            (medallion, price_calc, price_due, rate_mbr, kingdom, regid))
+            conn.commit()
+            conn.close()
+            return redirect(url_for('reg', regid=regid))
 
     return render_template('checkin.html', reg=reg, price_due=price_due, price_calc=price_calc, price_paid=price_paid, kingdom=kingdom, rate_mbr=rate_mbr, form=form)
 
@@ -337,7 +405,7 @@ def reports():
     connstring = "postgresql+psycopg2://" + conndict["user"] + ":" + conndict["password"] + "@" + conndict["host"] + ":5432/" + conndict["dbname"] 
     engine=db.create_engine(connstring)
     
-    file = 'test_' + str(datetime.now().isoformat(' ', 'seconds')) + '.xlsx'
+    file = 'test_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_")) + '.xlsx'
     start_date = form.dt_start.data
     end_date = form.dt_end.data
 
@@ -347,19 +415,22 @@ def reports():
         
         if report_type == 'full_export':
 
-            file = 'full_export_' + str(datetime.now().isoformat(' ', 'seconds')) + '.csv'
+            script_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+            file = 'full_export_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.csv'
+            csv_path = os.path.join(script_dir, '../reports/'+file)
 
             rptquery = "SELECT * FROM registrations"
             df = pd.read_sql_query(rptquery, engine)
-            path1 = './reports/' + file
+            path1 = csv_path
             path2 = '../reports/' + file
+            path2.replace(" ", "_")
             
             df.to_csv(path1)
             
          
         if report_type == 'full_checkin_report':
 
-            file = 'full_checkin_report_' + str(datetime.now().isoformat(' ', 'seconds')) + '.xlsx'
+            file = 'full_checkin_report_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.xlsx'
 
             rptquery = "SELECT * FROM registrations WHERE checkin::date BETWEEN {} and {}"
             rptquery = rptquery.format('%(start_date)s', '%(end_date)s')
@@ -376,7 +447,7 @@ def reports():
         
         if report_type == 'at_door_count':
 
-            file = 'at_door_count_' + str(datetime.now().isoformat(' ', 'seconds')) + '.xlsx'
+            file = 'at_door_count_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.xlsx'
 
             rptquery = "SELECT count(*), sum(price_calc) FROM registrations WHERE checkin::date BETWEEN {} and {} and prereg_status is Null"
             rptquery = rptquery.format('%(start_date)s', '%(end_date)s')
@@ -404,13 +475,23 @@ def reports():
         
         if report_type == 'kingdom_count':
 
-            file = 'kingdom_count_' + str(datetime.now().isoformat(' ', 'seconds')) + '.xlsx'
+            file = 'kingdom_count_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.xlsx'
 
-            rptquery = "SELECT kingdom, count(*) FROM registrations WHERE checkin::date BETWEEN {} and {} GROUP BY kingdom, checkin::date ORDER BY kingdom"
-            rptquery = rptquery.format('%(start_date)s', '%(end_date)s')
-            print(rptquery)
-            params = {'start_date':start_date, 'end_date':end_date}
-            df = pd.read_sql_query(rptquery, engine, params=params)
+            date_check = query_db(
+            "SELECT DISTINCT checkin::DATE FROM registrations WHERE checkin IS NOT NULL;")
+
+            date_cols = []
+            for d  in date_check:
+                date_cols.append("\"" + str(d['checkin']) + "\" bigint")
+            date_cols_str =', '.join(date_cols)
+            # print (date_cols_str)
+
+            # rptquery = "SELECT kingdom, count(*) OVER (PARTITION BY kingdom), checkin::date FROM registrations WHERE checkin::date BETWEEN {} and {} GROUP BY kingdom, checkin::date ORDER BY kingdom"
+            rptquery = "CREATE EXTENSION IF NOT EXISTS tablefunc; SELECT * FROM crosstab('SELECT kingdom, checkin::DATE, COUNT(regid) FROM registrations WHERE checkin::date IS NOT NULL GROUP BY kingdom, checkin::date ORDER BY 1', 'SELECT DISTINCT checkin::DATE FROM registrations WHERE checkin IS NOT NULL;') AS (kingdom text, "+ date_cols_str +");"
+            # rptquery = rptquery.format('%(start_date)s', '%(end_date)s')
+            # print(rptquery)
+            # params = {'start_date':start_date, 'end_date':end_date}
+            df = pd.read_sql_query(rptquery, engine)
             
             path1 = './reports/' + file
             path2 = '../reports/' + file
@@ -425,7 +506,7 @@ def reports():
 
         if report_type == 'ghost_report':
 
-            file = 'ghost_report_' + str(datetime.now().isoformat(' ', 'seconds')) + '.xlsx'
+            file = 'ghost_report_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.xlsx'
 
             rptquery = "SELECT order_id, regid, fname, lname, scaname, rate_age, lodging, prereg_status, checkin FROM registrations WHERE prereg_status = {} AND checkin IS NULL ORDER BY lodging"
             rptquery = rptquery.format('%(prereg_status)s')
@@ -440,7 +521,6 @@ def reports():
 
             df.to_excel(writer, sheet_name='Report' ,index = False)
             writer.close()
-
         return send_file(path2)
     return render_template('reports.html', form=form)
 
