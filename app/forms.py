@@ -16,11 +16,35 @@ mbrdata = [('Member', 'Member'), ('Non-Member', 'Non-Member')]
 
 reporttypedata = [('full_export', 'full_export'), ('full_checkin_report', 'full_checkin_report'), ('at_door_count', 'at_door_count'), ('kingdom_count', 'kingdom_count'), ('ghost_report', 'ghost_report')]
 
+roledata = [('User', 'User'), ('Shift Lead', 'Shift Lead'), ('Admin','Admin')]
 class LoginForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired()])
     password = PasswordField('Password', validators=[DataRequired()])
     remember_me = BooleanField('Remember Me')
     submit = SubmitField('Sign In')
+
+class CreateUserForm(FlaskForm):
+    # id = StringField('User Id', validators=[DataRequired()])
+    username = StringField('Username', validators=[DataRequired()])
+    role = SelectField('Role', validators=[DataRequired()], choices=roledata)
+    fname = StringField('First Name', validators=[DataRequired()])
+    lname = StringField('Last Name', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    submit = SubmitField('Submit')
+
+class EditUserForm(FlaskForm):
+    id = StringField('User Id', validators=[DataRequired()])
+    username = StringField('Username', validators=[DataRequired()])
+    role = SelectField('Role', validators=[DataRequired()], choices=roledata)
+    fname = StringField('First Name', validators=[DataRequired()])
+    lname = StringField('Last Name', validators=[DataRequired()])
+    submit = SubmitField('Submit')
+
+class UpdatePasswordForm(FlaskForm):
+    id = StringField('User Id', validators=[DataRequired()])
+    username = StringField('Username', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    submit = SubmitField('Submit')
 
 class CreateRegForm(FlaskForm):
     #regid = HiddenField(None)

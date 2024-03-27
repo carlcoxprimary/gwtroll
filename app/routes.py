@@ -1,5 +1,5 @@
 from app import app, db, login
-from app.forms import CreateRegForm, CheckinForm, WaiverForm, LoginForm, EditForm, ReportForm
+from app.forms import CreateRegForm, CheckinForm, WaiverForm, LoginForm, EditForm, ReportForm, EditUserForm, UpdatePasswordForm, CreateUserForm
 from app.models import Registrations, User
 import psycopg2
 import psycopg2.extras
@@ -7,6 +7,7 @@ from flask import Flask, render_template, request, url_for, flash, redirect, sen
 from werkzeug.exceptions import abort
 import os
 from flask_login import current_user, login_user, logout_user, login_required
+from werkzeug.security import generate_password_hash
 import sqlalchemy as sa
 import pandas as pd
 from datetime import datetime, date
@@ -63,6 +64,16 @@ def get_reg(regid):
     if reg is None:
         abort(404)
     return reg
+
+def get_user(userid):
+    conn= get_db_connection()
+    cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM public.user WHERE id = %s;', (userid,))
+    user = cur.fetchone()
+    conn.close()
+    if user is None:
+        abort(404)
+    return user
 
 def reg_count():
     conn= get_db_connection()
@@ -148,12 +159,99 @@ def reg(regid):
     else:
         return render_template('reg.html', reg=reg)
 
+@app.route('/users', methods=('GET', 'POST'))
+def users():
+    users = query_db("SELECT * FROM public.user")
+    return render_template('users.html', users=users)
+
+@app.route('/user/create', methods=('GET', 'POST'))
+def createuser():
+
+    form = CreateUserForm(
+        # id = user['id'], 
+        username = '', 
+        role = '', 
+        fname = '',
+        lname = '',
+        password = ''
+        )
+    
+    if request.method == 'POST':
+        # id = form.id.data 
+        username = form.username.data
+        role = form.role.data
+        fname = form.fname.data
+        lname = form.lname.data
+        password = form.password.data
+
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+        cur.execute('INSERT INTO public.user (username, role, fname, lname, password_hash) VALUES (%s, %s, %s, %s, %s);',
+                        (username, role, fname, lname, generate_password_hash(password)))
+        conn.commit()
+        conn.close()
+        return redirect('/users')
+
+    return render_template('createuser.html', form=form)
+
+@app.route('/user', methods=('GET', 'POST'))
+def edituser():
+    user = get_user(request.args.get("userid"))
+    edit_request = request.args.get("submitValue")
+    print(edit_request)
+    if edit_request == "Edit" :
+        form = EditUserForm(
+            id = user['id'], 
+            username = user['username'], 
+            role = user['role'], 
+            fname = user['fname'],
+            lname = user['lname'],
+        )
+        
+    elif edit_request == "Password Reset":
+        form = UpdatePasswordForm(
+            id = user['id'], 
+            username = user['username'], 
+            password = ''
+        )
+
+    if request.method == 'POST' and edit_request == 'Edit':
+        id = form.id.data 
+        username = form.username.data
+        role = form.role.data
+        fname = form.fname.data
+        lname = form.lname.data
+
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+        cur.execute('UPDATE public.user SET (username, role, fname, lname) = (%s, %s, %s, %s) WHERE id = %s;',
+                        (username, role, fname, lname, id))
+        conn.commit()
+        conn.close()
+        return redirect('/users')
+
+    if request.method == 'POST'  and edit_request == 'Password Reset':
+        id = form.id.data 
+        username = form.username.data
+        password = form.password.data
+
+        User.set_password(user,password)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+        cur.execute('UPDATE public.user SET (username, password_hash) = (%s, %s) WHERE id = %s;',
+                        (username, user.password_hash, id))
+        conn.commit()
+        conn.close()
+        return redirect('/users')
+    print(user)
+    print(form)
+    return render_template('edituser.html', user=user, form=form, edit_request=edit_request)
+
 @app.route('/upload', methods=('GET', 'POST'))
 def upload():
     if request.method == 'POST':   
         f = request.files['file'] 
         f.save(f.filename)
-        print
         print(os.path.join(os.path.abspath(os.path.dirname(app.root_path)),"../",f.filename))
 
         s = os.environ['AZURE_POSTGRESQL_CONNECTIONSTRING']
@@ -253,23 +351,22 @@ def editreg():
         lodging = form.lodging.data
 
         conn = get_db_connection()
-        reg = query_db(
+        medallion_check = query_db(
             "SELECT * FROM registrations WHERE medallion = %s order by lname, fname",
             (form.medallion.data,))
-        print(reg)
-        if reg.count > 0:
-            print("NOPE")
-            flash("NOPE")
-            return redirect(url_for('reg'))
+        if len(medallion_check) > 0 and int(regid) != int(medallion_check[0].get('regid')):
+            flash("Medallion # " + str(medallion_check[0]['medallion']) + " already assigned to " + str(medallion_check[0]['regid']) )
+            dup_url = '<a href=' + url_for('reg', regid=str(medallion_check[0]['regid'])) + ' target="_blank" rel="noopener noreferrer">Duplicate</a>'
+            flash(Markup(dup_url))
+
         else:
-            print("YEP")
-        cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
-        #Update DB with medallion number, timestamp, and costs
-        cur.execute('UPDATE registrations SET (medallion, price_calc, price_paid, price_due, rate_mbr, rate_age, kingdom, lodging) = (%s, %s, %s, %s, %s, %s, %s, %s ) WHERE regid = %s;',
-                        (medallion, price_calc, price_paid, price_due, rate_mbr, rate_age, kingdom, lodging, regid))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('reg', regid=regid))
+            cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
+            #Update DB with medallion number, timestamp, and costs
+            cur.execute('UPDATE registrations SET (medallion, price_calc, price_paid, price_due, rate_mbr, rate_age, kingdom, lodging) = (%s, %s, %s, %s, %s, %s, %s, %s ) WHERE regid = %s;',
+                            (medallion, price_calc, price_paid, price_due, rate_mbr, rate_age, kingdom, lodging, regid))
+            conn.commit()
+            conn.close()
+            return redirect(url_for('reg', regid=reg['regid']))
 
     return render_template('editreg.html', reg=reg, price_due=price_due, price_calc=price_calc, price_paid=price_paid, kingdom=kingdom, rate_mbr=rate_mbr, medallion=medallion, lodging=lodging, form=form)
 
@@ -381,12 +478,10 @@ def checkin():
             (form.medallion.data,))
         print(medallion_check)
         if len(medallion_check) > 0:
-            print("NOPE")
-            flash("NOPE Medallion # " + str(medallion_check[0]['medallion']) + " already assigned to " + str(medallion_check[0]['regid']) )
+            flash("Medallion # " + str(medallion_check[0]['medallion']) + " already assigned to " + str(medallion_check[0]['regid']) )
             dup_url = '<a href=' + url_for('reg', regid=str(medallion_check[0]['regid'])) + ' target="_blank" rel="noopener noreferrer">Duplicate</a>'
             flash(Markup(dup_url))
         else:
-            print("YEP")
             cur = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
             #Update DB with medallion number, timestamp, and costs
             cur.execute('UPDATE registrations SET (medallion, price_calc, price_due, rate_mbr, kingdom, checkin) = (%s, %s, %s, %s, %s, current_timestamp(0)) WHERE regid = %s;',

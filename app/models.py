@@ -15,6 +15,12 @@ class User(UserMixin, db.Model):
     #                                        unique=True)
     password_hash: so.Mapped[Optional[str]] = so.mapped_column(sa.String(256))
 
+    role: so.Mapped[str] = so.mapped_column(sa.String(64))
+
+    fname: so.Mapped[str] = so.mapped_column(sa.String(64))
+
+    lname: so.Mapped[str] = so.mapped_column(sa.String(64))
+
     def __repr__(self):
         return '<User {}>'.format(self.username)
 

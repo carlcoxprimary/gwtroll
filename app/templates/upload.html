@@ -1,6 +1,9 @@
 {% extends 'base.html' %}
 
 {% block content %}
+
+{% if current_user.role == "Admin" %}
+
 <html>   
 <head>   
     <title>upload the file : GFG</title>   
@@ -12,5 +15,11 @@
     </form>   
 </body>   
 </html>
+
+{% else %}
+
+<h1>ACCESS DENIED</h1>
+
+{% endif %}
 
 {% endblock %}
