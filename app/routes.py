@@ -156,6 +156,7 @@ def users():
     users = query_db("SELECT * FROM public.users")
     return render_template('users.html', users=users)
 
+
 @app.route('/user/create', methods=('GET', 'POST'))
 def createuser():
 
@@ -454,6 +455,11 @@ def checkin():
 
     return render_template('checkin.html', reg=reg, form=form)
 
+@app.route('/full_export', methods=('GET', 'POST'))
+def full_export():
+    regs = query_db("SELECT * FROM registrations WHERE signature IS NOT NULL")
+    return render_template('full_export_images.html', regs=regs)
+
 @app.route('/reports', methods=['GET', 'POST'])
 def reports():
     form = ReportForm()
@@ -465,24 +471,23 @@ def reports():
     file = 'test_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_")) + '.xlsx'
     start_date = form.dt_start.data
     end_date = form.dt_end.data
-
    
     if form.validate_on_submit():
         report_type = form.report_type.data
         
         if report_type == 'full_export':
 
-            script_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-            file = 'full_export_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.csv'
-            csv_path = os.path.join(script_dir, '../reports/'+file)
+            file = 'full_export_' + str(datetime.now().isoformat(' ', 'seconds').replace(" ", "_").replace(":","-")) + '.xlsx'
 
             rptquery = "SELECT * FROM registrations"
             df = pd.read_sql_query(rptquery, engine)
-            path1 = csv_path
+            path1 = './reports/' + file
             path2 = '../reports/' + file
-            path2.replace(" ", "_")
             
-            df.to_csv(path1)
+            writer = pd.ExcelWriter(path1, engine='xlsxwriter')
+            df.to_excel(writer, sheet_name='Report' ,index = False)
+            worksheet = writer.sheets['Report']
+            writer.close()
             
          
         if report_type == 'full_checkin_report':

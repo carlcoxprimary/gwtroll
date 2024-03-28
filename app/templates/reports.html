@@ -2,7 +2,6 @@
 
 {% block content %}
 
-{% if current_user.role == 'Shift Lead' or current_user.role == 'Admin' %}
 
 <form action="" method="post" novalidate>
     {{ form.hidden_tag() }}
@@ -21,11 +20,5 @@
     </p>
     <p>{{ form.submit() }}</p>
     </form>
-
-{% else %}
-
-    <h1>ACCESS DENIED</h1>
-
-{% endif %}
 
 {% endblock %}
