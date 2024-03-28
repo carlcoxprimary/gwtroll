@@ -47,7 +47,7 @@
           </ul>
         </div>
         {% endif %}
-      {% if current_user.role == "Admin" %}
+      <!-- {% if current_user.role == "Admin" %} -->
       <div class="collapse navbar-collapse" id="navbarNav">
         <div class="dropdown">
         <button class="navbar-nav" type="button" id="adminMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expandable="true" >
@@ -60,7 +60,7 @@
         </div>
       </div>
       </div>
-      {% endif %}
+      <!-- {% endif %} -->
       <div>
         {% if current_user.is_anonymous %}
         <a href="{{ url_for('login') }}">Login</a>

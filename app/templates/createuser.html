@@ -2,8 +2,6 @@
 
 {% block content %}
 
-{% if current_user.role == "Admin" %}
-
 <table id="createUserTable" class="table table-striped">
     <thread>
         <tr>
@@ -40,11 +38,5 @@
         </tr>
     </tbody>
 </table>
-
-{% else %}
-
-<h1>ACCESS DENIED</h1>
-
-{% endif %}
 
 {% endblock %}

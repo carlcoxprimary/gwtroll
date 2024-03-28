@@ -156,7 +156,8 @@ cython_debug/
 reports/
 
 #migrations
-migrations/versions/
+migrations/
+migrations/versions
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
